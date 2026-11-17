@@ -1,0 +1,17 @@
+# OpenSSL 3 configuration that also loads the legacy provider, so Python's hashlib offers ripemd160 again.
+# Litecoin 0.21's functional test framework calls hashlib.new('ripemd160'); Ubuntu 22.04 (OpenSSL 3.0) disables it
+# by default. Used only through OPENSSL_CONF by functional-tests.sh; nothing on the system is changed.
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+legacy = legacy_sect
+
+[default_sect]
+activate = 1
+
+[legacy_sect]
+activate = 1

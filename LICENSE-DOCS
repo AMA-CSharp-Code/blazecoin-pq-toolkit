@@ -1,0 +1,27 @@
+The written documents in this repository (REPORT.md, BITCOIN-PORTING-NOTE.md, DEFECTS.md, DESIGN-COMPARISON.md,
+the text of PATENT-PLEDGE.md and the README files) are licensed under the Creative Commons Attribution 4.0
+International License (CC BY 4.0).
+
+You are free to share and adapt them for any purpose, including commercially, provided you give appropriate credit
+("hyperminer, Blazecoin project"), link to the licence, and indicate if changes were made.
+
+Full licence text: https://creativecommons.org/licenses/by/4.0/legalcode
+Summary:           https://creativecommons.org/licenses/by/4.0/
+
+The code, data and patches (everything under toolkit/, bitcoin/, litecoin/, dogecoin/ and node-files/ other than the README
+files) are licensed under the MIT License; see LICENSE.
+
+Copyright (c) 2026 hyperminer, for the Blazecoin project (admin@blazecoin.co.uk), for the documents and for the code
+written for this repository.
+
+Third-party material keeps its own terms and its own notices:
+- the ML-DSA reference implementation added by the patches under src/crypto/mldsa/ is the work of the
+  CRYSTALS-Dilithium team (github.com/pq-crystals/dilithium): public domain under CC0, with Apache 2.0 or GPL 2.0
+  offered as alternatives;
+- the patches quote and modify code from Bitcoin Core, Litecoin Core and Dogecoin Core, each under the MIT License
+  with the copyright of its own developers;
+- the known-answer vectors in node-files/src/test/mldsa44_acvp_data.h are derived from NIST's ACVP test vectors
+  for ML-DSA, a work of the United States government;
+- the files under node-files/ are copies from Blazecoin Core; their headers name "The Blazecoin developers" and
+  the file COPYING, which is that repository's MIT licence.
+

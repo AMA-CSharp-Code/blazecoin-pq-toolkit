@@ -1,0 +1,400 @@
+From b86eb55975f71d4def727a55ee9f6b26fdf6cd5b Mon Sep 17 00:00:00 2001
+From: hyperminer <admin@blazecoin.co.uk>
+Date: Fri, 13 Nov 2026 21:38:40 +0000
+Subject: [PATCH 2/2] pqsig: activate by height
+ (Consensus::Params::PQSigHeight, regtest 1500; unscheduled on mainnet and
+ testnet) instead of version bits, which cannot signal on Dogecoin (the miner
+ pins base version 4 and the AuxPoW header uses those bits for the chain id);
+ getblockchaininfo reports it under softforks; regtest functional test
+ pqsig-softfork.py: a bad-signature spend is accepted in a block before the
+ height and rejected after it, the honest spend relays and mines, mutations
+ and the scriptSig policy are refused with their own errors
+
+---
+ qa/rpc-tests/pqsig-softfork.py | 190 +++++++++++++++++++++------------
+ src/chainparams.cpp            |  12 +--
+ src/consensus/params.h         |   5 +-
+ src/rpc/blockchain.cpp         |   8 +-
+ src/validation.cpp             |   4 +-
+ src/versionbits.cpp            |   4 -
+ 6 files changed, 135 insertions(+), 88 deletions(-)
+
+diff --git a/qa/rpc-tests/pqsig-softfork.py b/qa/rpc-tests/pqsig-softfork.py
+index b818e94..528cfe8 100755
+--- a/qa/rpc-tests/pqsig-softfork.py
++++ b/qa/rpc-tests/pqsig-softfork.py
+@@ -4,20 +4,22 @@
+ # file COPYING or http://www.opensource.org/licenses/mit-license.php.
+ """The post-quantum key-hash soft fork (OP_CHECKPQSIGVERIFY, src/script/pq.h) on regtest, end to end.
+ 
+-Activates DEPLOYMENT_PQSIG through version bits, pays into a P2SH output whose redeem script is
+-<pqkh> OP_CHECKPQSIGVERIFY using the ordinary wallet, then spends it with a transaction built and signed here
+-in Python (dilithium-py, pure Python ML-DSA-44) so that the node is the only thing under test. Then the
+-mutations a node must refuse, and the policy limit on the scriptSig size.
++Pays into a P2SH output whose redeem script is <pqkh> OP_CHECKPQSIGVERIFY with the ordinary wallet, then spends
++it with a transaction built and signed here in Python (dilithium-py, pure Python ML-DSA-44), so the node is the
++only thing under test. Shows the soft-fork property directly: before the activation height a block carrying a
++spend with a BAD signature is accepted (the opcode is a no-op to the old rules), after it the same block is
++rejected. Then the mutations a node must refuse, and the policy limit on the scriptSig size.
+ """
+ 
+ from test_framework.test_framework import BitcoinTestFramework
+ from test_framework.util import *
+-from test_framework.mininode import CTransaction, CTxIn, CTxOut, COutPoint, ToHex, FromHex, hash256, ser_uint256, ser_string, uint256_from_str
+-from test_framework.script import CScript, OP_NOP10, OP_TRUE
++from test_framework.mininode import CTransaction, CTxIn, CTxOut, COutPoint, ToHex, hash256, ser_string, COIN
++from test_framework.script import CScript, OP_NOP10
++from test_framework.blocktools import create_block, create_coinbase
+ 
+ import hashlib
++import os
+ import struct
+-import time
+ 
+ from dilithium_py.ml_dsa import ML_DSA_44
+ 
+@@ -26,6 +28,7 @@ TAG_SIGHASH = b"Dogecoin/PQSig/v1"
+ CTX_TX = b"dogecoin-tx-v1"
+ SIG_CHUNKS = (520, 520, 520, 520, 340)
+ KEYBLOB_CHUNKS = (520, 520, 273)
++ACTIVATION_HEIGHT = 1500  # regtest, chainparams.cpp
+ 
+ 
+ def tagged_sha256(tag, data):
+@@ -89,11 +92,12 @@ class PQSigSoftForkTest(BitcoinTestFramework):
+         self.is_network_split = False
+         self.sync_all()
+ 
+-    def status(self):
+-        return self.nodes[0].getblockchaininfo()["bip9_softforks"]["pqsig"]["status"]
++    # -- helpers ------------------------------------------------------------------------------------------------
++    def pqsig_status(self):
++        return [f for f in self.nodes[0].getblockchaininfo()["softforks"] if f["id"] == "pqsig"][0]
+ 
+     def fund(self, key, amount):
+-        """Pay amount into the key's P2SH output with the wallet; return (txid, vout)."""
++        """Pay amount into the key's P2SH output with the wallet; mine it; return (txid, vout)."""
+         addr = self.nodes[0].decodescript(bytes_to_hex_str(bytes(key.redeem)))["p2sh"]
+         txid = self.nodes[0].sendtoaddress(addr, amount)
+         self.nodes[0].generate(1)
+@@ -112,80 +116,124 @@ class PQSigSoftForkTest(BitcoinTestFramework):
+         tx.nLockTime = 0
+         return tx
+ 
+-    def run_test(self):
++    def signed_spend(self, key, amount, fee=5, flip_sig_byte=None):
++        txid, vout = self.fund(key, amount)
++        tx = self.spend_tx(txid, vout, amount, fee)
++        sig = key.sign(pq_sighash(tx, 0, amount * COIN, bytes(key.redeem)))
++        assert_equal(len(sig), 2420)
++        if flip_sig_byte is not None:
++            b = bytearray(sig); b[flip_sig_byte] ^= 0x01; sig = bytes(b)
++        tx.vin[0].scriptSig = key.script_sig(sig)
++        tx.rehash()
++        return tx
++
++    def submit_block_with(self, tx):
++        """Build a block on the tip carrying tx and submit it; return submitblock's answer (None = accepted)."""
+         node = self.nodes[0]
++        tip = node.getbestblockhash()
++        height = node.getblockcount() + 1
++        block = create_block(int(tip, 16), create_coinbase(height), node.getblock(tip)["time"] + 1)
++        block.vtx.append(tx)
++        block.hashMerkleRoot = block.calc_merkle_root()
++        block.rehash()
++        block.solve()
++        return node.submitblock(ToHex(block)), block.hash
++
++    def log_line(self, s):
++        print("PQSIG: " + s)
+ 
+-        # 1. Activation through version bits: 720-block periods on regtest; start time 0.
+-        assert_equal(self.status(), "defined")
+-        node.generate(720)
+-        assert_equal(self.status(), "started")
+-        node.generate(720)
+-        assert_equal(self.status(), "locked_in")
+-        node.generate(720)
+-        assert_equal(self.status(), "active")
++    # -- the test -----------------------------------------------------------------------------------------------
++    def run_test(self):
++        node = self.nodes[0]
++        node.generate(1200)   # well past coinbase maturity, well short of the activation height
+         self.sync_all()
+-        self.log_line("pqsig active at height %d" % node.getblockcount())
++        st = self.pqsig_status()
++        assert_equal(st["activation_height"], ACTIVATION_HEIGHT)
++        assert_equal(st["active"], False)
+ 
+-        # 2. The honest spend, signed in Python, accepted by both nodes and mined.
++        # 1. Before activation: an upgraded node already applies the new rule in its mempool (as Core did for
++        #    CSV), so the honest spend relays and mines, and a bad signature is refused at the mempool door...
+         key = PQKey()
+-        amount = 100
+-        txid, vout = self.fund(key, amount)
+-        tx = self.spend_tx(txid, vout, amount, fee=5)
+-        digest = pq_sighash(tx, 0, amount * COIN, bytes(key.redeem))
+-        sig = key.sign(digest)
+-        assert_equal(len(sig), 2420)
+-        tx.vin[0].scriptSig = key.script_sig(sig)
+-        raw = ToHex(tx)
+-        spend_txid = node.sendrawtransaction(raw)
++        tx = self.signed_spend(key, 100)
++        txid = node.sendrawtransaction(ToHex(tx))
+         self.sync_all()
+-        assert spend_txid in self.nodes[1].getrawmempool()
++        assert txid in self.nodes[1].getrawmempool()
+         node.generate(1)
+         self.sync_all()
+-        mined = node.getrawtransaction(spend_txid, 1)
+-        assert_equal(mined["confirmations"], 1)
+-        self.log_line("PQ spend mined: scriptSig %d bytes, tx %d bytes, fee %s DOGE" % (len(tx.vin[0].scriptSig), len(raw) // 2, 5))
+-
+-        # 3. A P2PKH spend of the same shape, for the size comparison.
+-        a = node.getnewaddress()
+-        t2 = node.sendtoaddress(a, 10)
+-        node.generate(1)
+-        classic = node.getrawtransaction(t2, 1)
+-        self.log_line("classic wallet tx for comparison: %d bytes, %d inputs" % (classic["size"], len(classic["vin"])))
++        assert_equal(node.getrawtransaction(txid, 1)["confirmations"], 1)
++        self.log_line("honest PQ spend mined before activation: scriptSig %d bytes, tx %d bytes" % (len(tx.vin[0].scriptSig), len(tx.serialize())))
++
++        bad = self.signed_spend(PQKey(), 100, flip_sig_byte=7)
++        assert_raises_jsonrpc(-26, "PQ signature is invalid", node.sendrawtransaction, ToHex(bad))
++        # ...but a BLOCK carrying the bad signature is still valid to consensus: the opcode is a no-op until
++        #    the activation height. This is the soft-fork property, seen from the old rules.
++        answer, accepted_hash = self.submit_block_with(bad)
++        assert_equal(answer, None)
++        assert_equal(node.getbestblockhash(), accepted_hash)
++        self.sync_all()
++        assert_equal(node.getrawtransaction(bad.hash, 1)["confirmations"], 1)
++        self.log_line("bad-signature spend accepted IN A BLOCK before activation (old rules: NOP) at height %d" % node.getblockcount())
+ 
+-        # 4. Mutations: each refused by the node with the opcode's own error.
++        # 2. Activate by height.
++        node.generate(ACTIVATION_HEIGHT - node.getblockcount())
++        self.sync_all()
++        assert_equal(node.getblockcount(), ACTIVATION_HEIGHT)
++        assert_equal(self.pqsig_status()["active"], True)
++
++        # 3. After activation the same kind of block is rejected by consensus...
++        bad2 = self.signed_spend(PQKey(), 100, flip_sig_byte=7)
++        tip_before = node.getbestblockhash()
++        answer, rejected_hash = self.submit_block_with(bad2)
++        assert_equal(answer, "rejected")   # this version's submitblock gives the bare verdict
++        assert_equal(node.getbestblockhash(), tip_before)
++        with open(os.path.join(self.options.tmpdir, "node0", "regtest", "debug.log"), encoding="utf-8", errors="replace") as f:
++            log = f.read()
++        assert ("invalid block=%s" % rejected_hash) in log, "the rejected block is not in debug.log as invalid"
++        assert ("ConnectBlock %s failed" % rejected_hash) in log, "ConnectBlock did not fail on the rejected block"
++        self.log_line("bad-signature block %s... rejected by ConnectBlock after activation (height %d)" % (rejected_hash[:16], node.getblockcount() + 1))
++        # ...and the honest spend still goes through.
+         key2 = PQKey()
+-        txid, vout = self.fund(key2, amount)
+-        tx = self.spend_tx(txid, vout, amount, fee=5)
+-        digest = pq_sighash(tx, 0, amount * COIN, bytes(key2.redeem))
+-        sig = key2.sign(digest)
+-
+-        bad = bytearray(sig); bad[7] ^= 0x01
+-        tx.vin[0].scriptSig = key2.script_sig(bytes(bad))
+-        assert_raises_jsonrpc(-26, "PQ signature is invalid", node.sendrawtransaction, ToHex(tx))
+-
+-        tx.vin[0].scriptSig = key2.script_sig(sig, sig_sizes=(340, 520, 520, 520, 520))   # same bytes, other split
+-        assert_raises_jsonrpc(-26, "PQ signature is invalid", node.sendrawtransaction, ToHex(tx))
+-
+-        tx.vin[0].scriptSig = key2.script_sig(sig, keyblob=key.keyblob)                    # another key behind the hash
+-        assert_raises_jsonrpc(-26, "does not hash to the committed key hash", node.sendrawtransaction, ToHex(tx))
+-
+-        tx.vin[0].scriptSig = key2.script_sig(key.sign(digest))                           # right digest, wrong signer
+-        assert_raises_jsonrpc(-26, "PQ signature is invalid", node.sendrawtransaction, ToHex(tx))
+-
+-        # 5. Policy: ten pushes are not the standard shape, so the 1650-byte limit applies again on node 0,
+-        #    while node 1 (accepts non-standard) rejects it on the clean-stack rule instead.
+-        tx.vin[0].scriptSig = key2.script_sig(sig, extra_push=b"\x01")
+-        assert_raises_jsonrpc(-26, "scriptsig-size", node.sendrawtransaction, ToHex(tx))
+-        assert_raises_jsonrpc(-26, "", self.nodes[1].sendrawtransaction, ToHex(tx))
++        tx2 = self.signed_spend(key2, 100)
++        txid2 = node.sendrawtransaction(ToHex(tx2))
++        node.generate(1)
++        self.sync_all()
++        assert_equal(node.getrawtransaction(txid2, 1)["confirmations"], 1)
++        assert_equal(self.nodes[1].getrawtransaction(txid2, 1)["confirmations"], 1)
+ 
+-        # 6. And the honest spend of this second key still goes through after all that.
+-        tx.vin[0].scriptSig = key2.script_sig(sig)
+-        spend2 = node.sendrawtransaction(ToHex(tx))
++        # 4. For the size comparison: a wallet-made classic spend.
++        t2 = node.sendtoaddress(node.getnewaddress(), 10)
+         node.generate(1)
+-        assert_equal(node.getrawtransaction(spend2, 1)["confirmations"], 1)
++        classic = node.getrawtransaction(t2, 1)
++        self.log_line("classic wallet tx for comparison: %d bytes, %d input(s)" % (classic["size"], len(classic["vin"])))
+ 
+-    def log_line(self, s):
+-        print("PQSIG: " + s)
++        # 5. Mutations at the mempool door, each with the opcode's own error.
++        key3 = PQKey()
++        amount = 100
++        txid3, vout3 = self.fund(key3, amount)
++        tx3 = self.spend_tx(txid3, vout3, amount, fee=5)
++        digest = pq_sighash(tx3, 0, amount * COIN, bytes(key3.redeem))
++        sig = key3.sign(digest)
++
++        tx3.vin[0].scriptSig = key3.script_sig(sig, sig_sizes=(340, 520, 520, 520, 520))   # same bytes, other split
++        assert_raises_jsonrpc(-26, "PQ signature is invalid", node.sendrawtransaction, ToHex(tx3))
++        tx3.vin[0].scriptSig = key3.script_sig(sig, keyblob=key.keyblob)                    # another key behind the hash
++        assert_raises_jsonrpc(-26, "does not hash to the committed key hash", node.sendrawtransaction, ToHex(tx3))
++        tx3.vin[0].scriptSig = key3.script_sig(key.sign(digest))                           # right digest, wrong signer
++        assert_raises_jsonrpc(-26, "PQ signature is invalid", node.sendrawtransaction, ToHex(tx3))
++
++        # 6. Policy: ten pushes are not the standard shape, so the 1650-byte limit applies again on node 0,
++        #    while node 1 (accepts non-standard transactions) refuses it on the clean-stack rule instead.
++        tx3.vin[0].scriptSig = key3.script_sig(sig, extra_push=b"\x01")
++        assert_raises_jsonrpc(-26, "scriptsig-size", node.sendrawtransaction, ToHex(tx3))
++        assert_raises_jsonrpc(-26, "", self.nodes[1].sendrawtransaction, ToHex(tx3))
++
++        # 7. And the honest spend of that key still goes through.
++        tx3.vin[0].scriptSig = key3.script_sig(sig)
++        spend3 = node.sendrawtransaction(ToHex(tx3))
++        node.generate(1)
++        self.sync_all()
++        assert_equal(node.getrawtransaction(spend3, 1)["confirmations"], 1)
++        self.log_line("done at height %d" % node.getblockcount())
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/src/chainparams.cpp b/src/chainparams.cpp
+index beb4609..f2eb947 100644
+--- a/src/chainparams.cpp
++++ b/src/chainparams.cpp
+@@ -84,6 +84,7 @@ public:
+         consensus.BIP34Height = 1034383;
+         consensus.BIP34Hash = uint256S("0x80d1364201e5df97e696c03bdd24dc885e8617b9de51e453c10a4f629b1e797a");
+         consensus.BIP65Height = 3464751; // 34cd2cbba4ba366f47e5aa0db5f02c19eba2adf679ceb6653ac003bdc9a0ef1f - first v4 block after the last v3 block
++        consensus.PQSigHeight = 0x7fffffff; // post-quantum key-hash spends: NOT scheduled (a regtest sketch)
+         consensus.BIP66Height = 1034383; // 80d1364201e5df97e696c03bdd24dc885e8617b9de51e453c10a4f629b1e797a - this is the last block that could be v2, 1900 blocks past the last v2 block
+         consensus.powLimit = uint256S("0x00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // ~uint256(0) >> 20;
+         consensus.nPowTargetTimespan = 4 * 60 * 60; // pre-digishield: 4 hours
+@@ -109,9 +110,6 @@ public:
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].bit = 1;
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nStartTime = 1479168000; // November 15th, 2016.
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout = 0; // Disabled
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].bit = 2;
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].nStartTime = 999999999999ULL; // never: a regtest sketch, not scheduled
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].nTimeout = 999999999999ULL;
+ 
+         // The best chain should have at least this much work.
+         consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000e993d2aa86cf246a49b"); // 5,050,000
+@@ -247,6 +245,7 @@ public:
+         consensus.BIP34Height = 708658;
+         consensus.BIP34Hash = uint256S("0x21b8b97dcdb94caa67c7f8f6dbf22e61e0cfe0e46e1fff3528b22864659e9b38");
+         consensus.BIP65Height = 1854705; // 955bd496d23790aba1ecfacb722b089a6ae7ddabaedf7d8fb0878f48308a71f9
++        consensus.PQSigHeight = 0x7fffffff; // post-quantum key-hash spends: NOT scheduled (a regtest sketch)
+         consensus.BIP66Height = 708658; // 21b8b97dcdb94caa67c7f8f6dbf22e61e0cfe0e46e1fff3528b22864659e9b38 - this is the last block that could be v2, 1900 blocks past the last v2 block
+         consensus.powLimit = uint256S("0x00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // ~uint256(0) >> 20;
+         consensus.nPowTargetTimespan = 4 * 60 * 60; // pre-digishield: 4 hours
+@@ -268,9 +267,6 @@ public:
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].bit = 1;
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nStartTime = 1462060800; // May 1st 2016
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout = 0; // Disabled
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].bit = 2;
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].nStartTime = 999999999999ULL; // never: a regtest sketch, not scheduled
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].nTimeout = 999999999999ULL;
+ 
+         // The best chain should have at least this much work.
+         consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000000000540f2f62ff9a26"); // 5,900,000
+@@ -394,6 +390,7 @@ public:
+         consensus.BIP34Height = 100000000; // BIP34 has not activated on regtest (far in the future so block v1 are not rejected in tests)
+         consensus.BIP34Hash = uint256();
+         consensus.BIP65Height = 1351; // BIP65 activated on regtest (Used in rpc activation tests)
++        consensus.PQSigHeight = 1500; // post-quantum key-hash spends active on regtest from this height (qa/rpc-tests/pqsig-softfork.py)
+         consensus.BIP66Height = 1251; // BIP66 activated on regtest (Used in rpc activation tests)
+         consensus.powLimit = uint256S("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // ~uint256(0) >> 1;
+         consensus.nPowTargetTimespan = 4 * 60 * 60; // pre-digishield: 4 hours
+@@ -412,9 +409,6 @@ public:
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].bit = 1;
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nStartTime = 0;
+         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout = 999999999999ULL;
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].bit = 2;
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].nStartTime = 0;
+-        consensus.vDeployments[Consensus::DEPLOYMENT_PQSIG].nTimeout = 999999999999ULL;
+ 
+         // The best chain should have at least this much work.
+         consensus.nMinimumChainWork = uint256S("0x00");
+diff --git a/src/consensus/params.h b/src/consensus/params.h
+index 83b6b57..c13fd99 100644
+--- a/src/consensus/params.h
++++ b/src/consensus/params.h
+@@ -18,7 +18,6 @@ enum DeploymentPos
+     DEPLOYMENT_TESTDUMMY,
+     DEPLOYMENT_CSV, // Deployment of BIP68, BIP112, and BIP113.
+     DEPLOYMENT_SEGWIT, // Deployment of BIP141, BIP143, and BIP147.
+-    DEPLOYMENT_PQSIG, // Post-quantum key-hash spends via OP_CHECKPQSIGVERIFY (script/pq.h); regtest only, not scheduled on any live network.
+     // NOTE: Also add new deployments to VersionBitsDeploymentInfo in versionbits.cpp
+     MAX_VERSION_BITS_DEPLOYMENTS
+ };
+@@ -50,6 +49,10 @@ struct Params {
+     uint256 BIP34Hash;
+     /** Block height at which BIP65 becomes active */
+     int BIP65Height;
++    /** Block height at which OP_NOP10 becomes OP_CHECKPQSIGVERIFY (post-quantum key-hash spends, script/pq.h).
++     *  A height, like BIP65Height and BIP66Height: Dogecoin's miner does not signal version bits and the AuxPoW
++     *  header uses those bits for the chain id, so a BIP9 deployment cannot activate here. */
++    int PQSigHeight;
+     /** Block height at which BIP66 becomes active */
+     int BIP66Height;
+     /**
+diff --git a/src/rpc/blockchain.cpp b/src/rpc/blockchain.cpp
+index 598d781..2700c6e 100644
+--- a/src/rpc/blockchain.cpp
++++ b/src/rpc/blockchain.cpp
+@@ -1262,9 +1262,15 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
+     softforks.push_back(SoftForkDesc("bip34", 2, tip, consensusParams));
+     softforks.push_back(SoftForkDesc("bip66", 3, tip, consensusParams));
+     softforks.push_back(SoftForkDesc("bip65", 4, tip, consensusParams));
++    {
++        UniValue pq(UniValue::VOBJ);
++        pq.pushKV("id", "pqsig");
++        pq.pushKV("activation_height", consensusParams.PQSigHeight);
++        pq.pushKV("active", tip->nHeight >= consensusParams.PQSigHeight);
++        softforks.push_back(pq);
++    }
+     BIP9SoftForkDescPushBack(bip9_softforks, "csv", consensusParams, Consensus::DEPLOYMENT_CSV);
+     BIP9SoftForkDescPushBack(bip9_softforks, "segwit", consensusParams, Consensus::DEPLOYMENT_SEGWIT);
+-    BIP9SoftForkDescPushBack(bip9_softforks, "pqsig", consensusParams, Consensus::DEPLOYMENT_PQSIG);
+     obj.pushKV("softforks",             softforks);
+     obj.pushKV("bip9_softforks", bip9_softforks);
+     obj.pushKV("warnings", GetWarnings("statusbar"));
+diff --git a/src/validation.cpp b/src/validation.cpp
+index 1e2f4d0..92bc358 100644
+--- a/src/validation.cpp
++++ b/src/validation.cpp
+@@ -1909,8 +1909,8 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
+         nLockTimeFlags |= LOCKTIME_VERIFY_SEQUENCE;
+     }
+ 
+-    // Start enforcing post-quantum key-hash spends (OP_CHECKPQSIGVERIFY) using versionbits logic.
+-    if (VersionBitsState(pindex->pprev, consensus, Consensus::DEPLOYMENT_PQSIG, versionbitscache) == THRESHOLD_ACTIVE) {
++    // Start enforcing post-quantum key-hash spends (OP_CHECKPQSIGVERIFY, script/pq.h) by height.
++    if (pindex->nHeight >= chainparams.GetConsensus(0).PQSigHeight) {
+         flags |= SCRIPT_VERIFY_PQSIG;
+     }
+ 
+diff --git a/src/versionbits.cpp b/src/versionbits.cpp
+index 4a90731..8a7cce7 100644
+--- a/src/versionbits.cpp
++++ b/src/versionbits.cpp
+@@ -18,10 +18,6 @@ const struct BIP9DeploymentInfo VersionBitsDeploymentInfo[Consensus::MAX_VERSION
+     {
+         /*.name =*/ "segwit",
+         /*.gbt_force =*/ true,
+-    },
+-    {
+-        /*.name =*/ "pqsig",
+-        /*.gbt_force =*/ true,
+     }
+ };
+ 
+-- 
+2.34.1
+
