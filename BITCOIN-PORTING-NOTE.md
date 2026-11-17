@@ -1,6 +1,6 @@
 # Carrying a deployed ML-DSA-44 output type to Bitcoin: what would have to change
 
-hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0, 17 November 2026. Companion to [the field report](REPORT.md).
+hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0.1, 17 November 2026. Companion to [the field report](REPORT.md).
 
 ## 1. Summary
 
@@ -58,8 +58,7 @@ argue that Bitcoin should prefer it to its current drafts.
 ## 4. The port: the same commitment as a witness program
 
 Built as one patch against Bitcoin Core master and run on regtest only (the patch and its tests are in this
-repository, under `bitcoin/`). This is the smallest change I can see that keeps the pattern and removes the four problems
-above.
+repository, under `bitcoin/`). This is the smallest change I can see that keeps the pattern and removes the four problems above. It is not a new design: two drafts posted to Delving Bitcoin describe almost the same output for ML-DSA-65, and section 6 sets them out.
 
 **Output:** a new witness version with a 32-byte program: `OP_n <32-byte key hash>`, where the hash is the same
 tagged hash of `algorithm byte + public key`. 34 bytes of script, as for Taproot.
@@ -90,7 +89,7 @@ What the regtest build chose and showed:
   live network.
 - **The version number is a placeholder.** `OP_2 <32-byte program>` is the template BIP-360 assigns to
   pay-to-Merkle-root ("P2MR (pay to Merkle root) outputs use SegWit version 2", addresses beginning `bc1z`). On Bitcoin the two could
-  not coexist: a real proposal would need a different witness version or program length.
+  not coexist: a real proposal would need a different witness version or program length. Both drafts described in section 6 use version 3.
 - **The soft-fork property holds in a two-node test.** A block carrying a spend with a bad signature is accepted
   by a node without the deployment and rejected by a node with it.
 - **Four places in Bitcoin Core had to learn the new program besides the interpreter**, and the first unit tests
@@ -99,7 +98,7 @@ What the regtest build chose and showed:
   deployment is active. And the hashes the BIP-341 message needs are precomputed only for transactions that spend
   a Taproot output, so a real spend of the new program reached the signature check with no data. The second is
   not a new finding: Marscoin's P2WPQH branch needed the same change and carries a unit test for it
-  (`p2wpqh_precomputation_detects_spends`, section 6). The Litecoin port and the re-test it prompted found the
+  (`p2wpqh_precomputation_detects_spends`, section 6), and a regtest implementation of BIP-360 reported the same pitfall for witness version 2 programs in July 2026 (jeanpablojp, Delving Bitcoin topic 2751). The Litecoin port and the re-test it prompted found the
   other two. `DeferringSignatureChecker`, which wraps another checker, did not pass the new check on and answered
   false for every such spend. And the list of all consensus script flags (`GetAllConsensusScriptFlags`) lacked
   the new flag, which Core's own `versionbits_tests` reports. Three of Core's existing functional tests also had
@@ -146,8 +145,7 @@ behaviour, because the deployed chain has no fee pressure.
 
 ## 6. Where this sits beside Bitcoin's own drafts
 
-As I read the public record, BIP-360 began in September 2024 as "pay to quantum resistant hash" (P2QRH): a new
-output type committing to post-quantum keys, with the signature schemes named in the same document. In 2025 its
+As I read the public record, the proposal that became BIP-360 was first posted on 8 June 2024, to the bitcoin-dev list and to Delving Bitcoin (topic 956), as "QuBit - P2QRH spending rules" ("pay to quantum resistant hash"): a new SegWit output type with its signature scheme named in the same document, SQIsign at that time. In 2025 its
 authors changed course. Version 0.8.0 (7 July 2025) made the output a Taproot script tree with the key path
 removed and moved signature schemes out to opcodes or leaf versions; 0.9.0 (20 July 2025) put it on witness
 version 2; 0.10.0 (17 September 2025) renamed it pay-to-tapscript-hash (P2TSH); and 0.11.0 (10 February 2026)
@@ -195,6 +193,28 @@ seven BIP-341 hash types, where the section 4 build signs deterministically and 
 and it activates by buried height, not a BIP-9 deployment. It has wallet support (addresses, descriptors,
 seed-derived keys) and the section 4 build has none; the section 4 build has a two-node soft-fork test and I
 found none there. Its tree also carries wallet-migration documents that I saw by title only and have not read.
+
+**Two drafts on Delving Bitcoin describe almost the same output with ML-DSA-65, and I had not read them when I built section 4.** I found both on 17 November 2026, the day version 1.0 of this note was published, by searching the forum itself, which I should have done first. Version 1.0.1 adds them.
+
+The first is "Post-Quantum Witness Version 3 Key-Path Spending (ML-DSA-65)" by Echelon Labs Research: a BIP draft dated 31 March 2026, with a patch against Bitcoin Core and functional tests (`github.com/btcpqresearch/bip-pq-witness-v3`, commit `7bbfb29`, 15 April 2026), posted to Delving Bitcoin on 16 April 2026 (topic 2422). I read the draft text and the forum post, not the patch. Its output is `OP_3 <SHA-256 of the public key>`, its witness is the signature and the key, and validation is a fixed check and one call to the verifier with no script execution. The message is a tagged hash named "PQSighash" over an epoch byte and the BIP-341 per-transaction hashes, with its own spend-type byte, and it takes the BIP-341 hash types. It is a BIP-9 soft fork, and its reference code uses liboqs 0.15.0. The forum post gives about 5,600 WU (1,400 vB) for a one-input, one-output spend, about 72 inputs in a standard transaction and about 720 in a block. The draft sets ML-DSA-44 aside in one sentence: "ML-DSA-44 has a thinner security margin than is prudent for coins with decades-long lifetimes."
+
+The second is a post-quantum address format draft by Zaenus (`github.com/Zaenus/btc-safe`, read at commit `4e09003`), posted to Delving Bitcoin on 13 November 2026 (topic 3067) and revised to version 0.2 the same day. In that revision the committed value is a key blob, `key_type || pubkey`, hashed under the tag "PQKeyCommit"; the output is `OP_3 <32 bytes>`; the witness is the signature and the key blob; the message is the BIP-341 message under the tag "PQSighash"; and signatures carry a FIPS 204 context string, one for transactions and another for signed messages. An undefined key type succeeds, as an upgrade hook. Its cost table gives an ML-DSA-65 input as 5,433 WU and lists an ML-DSA-44 input "for comparison" at 3,904 WU (about 976 vB), about 1,024 to a block. Its author names the choice between ML-DSA-44 and ML-DSA-65, validation cost and the witness discount as open questions, and says of validation cost: "Bitcoin Core benchmarks are the next step on my side."
+
+So the build in section 4 is not a new design. The output form, the two-item witness and the BIP-341 message under its own tag are in the first draft; the key blob with a type byte and the context string are in the second. The credit for describing this shape for Bitcoin belongs to those two drafts and to the early P2QRH text. My patch also uses the same tag name, "PQSighash", and the same name for the checker method, `CheckPQSignature`, as the first draft. I had not read that draft. The code was written with the help of an AI assistant, and I cannot rule out that the names reached it that way.
+
+What section 4 adds beside them is narrower than a design:
+
+- **The ML-DSA-44 size, built and measured on two codebases.** 3,904 WU an input on Bitcoin Core and on Litecoin Core, asserted as an exact value in the tests. It is the figure the second draft gives by arithmetic.
+- **A FIPS 204 implementation inside the tree.** The pq-crystals reference code is vendored and configured for deterministic signing, with no external library. The post that introduced the first draft calls the dependency "the largest open implementation question".
+- **Some evidence on validation cost, from a different placement.** Both drafts leave it open. The field report measures an ML-DSA-44 input at about 1.8 times a P2PKH input on an untuned node (section 5 there). That is the deployed legacy-script type, not the witness build, which I have not benchmarked.
+- **A per-signature limit that was set wrongly.** The first draft asks whether weight alone is enough or a separate budget is needed. The deployed chain has a per-signature count that I set 28 times too high, and it capped the wrong thing (the defect list, A5).
+- **Two months of the key blob and the context string on a live chain,** with test vectors and an independent verifier.
+
+The section 4 build is the weakest of the three in four ways: it accepts SIGHASH_DEFAULT only, where both drafts take the BIP-341 hash types; it uses witness version 2, which BIP-360 has taken, where both use version 3; it signs deterministically only; and it uses the parameter set the first draft rejects.
+
+**The objections to a single-key ML-DSA output are already on the record, and they apply to section 4 as well.** The one reply to the first draft (conduition, 1 June 2026) asks why it adds an output type that "commits only to an ML-DSA key, and doesn't allow for script trees or other complex spending conditions" when ML-DSA could be enabled in tapscript and used in P2MR; why give up cryptographic agility; how it would scale with no further witness discount; and what justifies ML-DSA over hash-based signatures, which "don't come with new cryptographic assumptions". On the parameter set it leans the other way from the draft: "ML-DSA-44 has the same classical security level as secp256k1 (128 bits), and is significantly smaller." The thread shows no answer from the draft's author. The first two objections are the ones at the head of this section.
+
+**Where Bitcoin's own discussion stood when I read it.** The thread "PQC output type discussion" on Delving Bitcoin (topic 2749, opened by sipa on 27 July 2026, 39 posts to 2 October 2026) lists the candidate output types as P2MR, P2TRv2, P2TRH and P2QR. Each is shaped like Taproot or like a Merkle root, with post-quantum signatures arriving as opcodes or leaf types. None is a single-key output, the thread does not mention ML-DSA, and it assumes hash-based signatures throughout. Its opening posts prefer "a combination of P2TRv2 and P2MR, covering distinct use cases", and it had not reached agreement at its last post. So a key-hash output with a lattice signature, whether mine or the two drafts', is outside what that discussion is weighing. I read that thread through a summary of all its posts with quotations, and checked the passages quoted here against the forum.
 
 ## 7. Migration, from having done one
 
@@ -358,8 +378,9 @@ are shipped and have been used on mainnet, mostly with my own funds (for the hyg
 mainnet but my record does not say the wallet tool sent it); receive-only custody is a proposal with its
 building blocks in the node; and the effect of any of it on other users has not been measured. And a search
 result: I have not found these parts described together as one wallet pattern with a post-quantum output type
-validating beneath it. That is a statement about my search, to my knowledge and no more, not a claim of
-priority.
+validating beneath it. That is a statement about my search, to my knowledge and no more, not a claim of priority.
+
+**The classification and its advice were also drafted for Bitcoin before this note, and more carefully.** "Standardizing an exposure classification for existing outputs" (duncan0k, Delving Bitcoin topic 2866, 3 September 2026; repository `github.com/duncan0k/pubkey-exposure-classification`; submitted to the BIPs repository on 18 September 2026 as pull request 2294, "BIP362: Output Public Key Exposure Classification", open when I read it on 17 November 2026) defines four levels, EXPOSED_AT_REST, EXPOSED_ON_SPEND, NOT_EXPOSED and UNDETERMINED, with a table by output type, a reference implementation in Python and test vectors. Its author's floor of advice for each level, given in the thread on 11 September 2026, is the rule I call move-exposed-first: for coins exposed at rest, "move to a non-exposed output type as soon as one you trust exists"; for coins exposed only on spend, "nothing needed at rest; when you do spend, sweep the whole balance and never send change or new funds back". My exposed and hash-safe states are its first two levels under other names. It is stricter than my script in one way that matters: where the data cannot tell two levels apart it assigns the more exposed one, and it has a level for outputs it cannot classify, where my script has neither rule. I found it on 17 November 2026, after version 1.0. The triage job and the move-exposed-first rule are therefore not mine to claim, and a wallet that implements them for Bitcoin should follow that draft, not this note.
 
 **Two things my chain measured that bear on the policy.**
 
@@ -442,6 +463,20 @@ out and it did not matter.
 - conduition, Heilman, Kudinov, Kurbatov, Nick, remix7531. SHRINCS: A Compact Hash-Based Signature Scheme.
   https://github.com/SHRINCS/shrincs-bip/blob/main/SHRINCS.md. Draft, no BIP number, commit `990cd1f` (2026-11-09).
   Read 2026-11-17.
+- Echelon Labs Research. Post-Quantum Witness Version 3 Key-Path Spending (ML-DSA-65). BIP draft, created
+  2026-03-31. https://github.com/btcpqresearch/bip-pq-witness-v3, commit `7bbfb29` (2026-04-15); posted to Delving
+  Bitcoin 2026-04-16, https://delvingbitcoin.org/t/2422. Draft text and post read 2026-11-17; the patch not read.
+- Zaenus. Post-quantum address format draft (ML-DSA-65), version 0.2. https://github.com/Zaenus/btc-safe, commit
+  `4e09003` (2026-11-13); posted to Delving Bitcoin 2026-11-13, https://delvingbitcoin.org/t/3067. Read 2026-11-17.
+- duncan0k. Standardizing an exposure classification for existing outputs. Delving Bitcoin, 2026-09-03,
+  https://delvingbitcoin.org/t/2866; https://github.com/duncan0k/pubkey-exposure-classification; BIPs pull request
+  2294, "BIP362: Output Public Key Exposure Classification", opened 2026-09-18. Opening post and the reply of
+  2026-09-11 read 2026-11-17; the draft text and the code not read.
+- Delving Bitcoin. "PQC output type discussion", topic 2749, opened by sipa 2026-07-27, 39 posts to 2026-10-02,
+  https://delvingbitcoin.org/t/2749; "Proposing a P2QRH BIP towards a quantum resistant soft fork", topic 956,
+  2024-06-08; reply by conduition in topic 2422, 2026-06-01; "BIP 360 (P2MR) implemented in Bitcoin Core on
+  regtest", topic 2751, 2026-07-28. Read 2026-11-17 (topic 2749 through a summary of every post with quotations;
+  the passages quoted were checked against the forum).
 - Marscoin, `github.com/marscoin/marscoin`, branches `feat/pq-witness-v2` (commit `8843ef7`) and
   `feature/quantum-upgrade` (head `a0fad48`, 2026-10-12): `src/script/interpreter.cpp`, `src/consensus/params.h`,
   `doc/quantum-p2wpqh-sighash-v1.md`, `doc/quantum-signatures-sphincs-v1.md`. Read 2026-11-16.

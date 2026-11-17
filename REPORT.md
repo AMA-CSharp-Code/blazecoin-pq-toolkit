@@ -1,6 +1,6 @@
 # ML-DSA-44 as a native output type on a legacy-script Bitcoin Core fork: a field report
 
-hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0, 17 November 2026.
+hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0.1, 17 November 2026.
 
 ## 1. Summary
 
@@ -374,7 +374,7 @@ fork is the right goal for one.
 1. It is a hard fork.
 2. It depends on one lattice scheme with no hybrid. If ML-DSA-44 fails, the algorithm byte allows a replacement,
    but coins on the old algorithm would have to move again.
-3. It is NIST category 2 on newer assumptions, where SHRINCS aims at category 1 on SHA-256 alone.
+3. It is NIST category 2 on newer assumptions, where SHRINCS aims at category 1 on SHA-256 alone. A Bitcoin draft that chooses ML-DSA-65 sets ML-DSA-44 aside as having "a thinner security margin than is prudent for coins with decades-long lifetimes" (porting note, section 6).
 4. Single key only. Nothing here helps with multisig, which custodians and exchanges need.
 5. No witness discount and no fee floor on this chain, so the size cost is hidden in a way it would not be on a
    chain with fee pressure.
@@ -422,8 +422,7 @@ questions that come up in the BIP-360, SHRINCS and BIP-361 discussions:
 ### 10.2 Related work
 
 The comparison document sets the proposals (BIP-360, BIP-361, SHRINCS, Dogecoin's draft) and other routes side
-by side, with sources and read dates. Three systems that are deployed or built are closest to this one: an
-earlier split network, a new chain and a test-network witness type. I have not
+by side, with sources and read dates. Four systems that are deployed or built are closest to this one: an earlier split network, two new chains and a test-network witness type. I have not
 made a systematic search for earlier chains that added post-quantum signatures to an existing UTXO (unspent transaction output) set; the
 comparison document lists what I read.
 
@@ -444,10 +443,11 @@ the signature checks: the signature is 2,420 bytes, or 2,421 with a hash-type by
 the 1,312-byte key. The two are opposite cases with the same primitive (by its README): a new chain that is post-quantum from the
 start has no classic-key outputs to migrate
 and no classic spend path to retire, while this chain added the type to a UTXO set that has existed since 2014
-and carries every migration question with it. Someone checking ML-DSA-44 costs in a scrypt node should
-measure both.
+and carries every migration question with it. Someone checking ML-DSA-44 costs in a scrypt node should measure both.
 
-The third is closer in form to the witness build of the porting note than to this chain. Marscoin's repository
+Another new chain reported field data to Bitcoin developers before this report did. KVANTA5, by its own post on Delving Bitcoin (3 July 2026, topic 2682) and its repository's README, is a SHA-256 proof-of-work chain with ML-DSA-87 as its only signature scheme from its first block, on mainnet since 1 June 2026. The post gives figures from a deliberate stress test on that mainnet: 4,000 outputs created in one transaction and spent in the next, 29,072,055 bytes for the second, about 7,268 bytes an input. I take all of that from the post and have not examined the chain or the code. Like Soqucoin it has no earlier outputs to migrate. Its figures are for the largest ML-DSA parameter set and this report's are for the smallest, so between them they bracket the cost of an input: about 7,268 bytes and 3,782.
+
+The fourth is closer in form to the witness build of the porting note than to this chain. Marscoin's repository
 (`marscoin/marscoin`, branch `feat/pq-witness-v2`, commit `8843ef7`, April 2026; integration branch
 `feature/quantum-upgrade`, read at `a0fad48`, October 2026) adds `OP_2 <32-byte hash>` as witness version 2, a
 key-hash output with the signature and key in the witness. Its scheme is SLH-DSA-SHA2-128s (FIPS 205), with a
@@ -457,13 +457,14 @@ the network. It differs from this chain in signature family and sizes, in being 
 a soft fork by buried height, and in not being on a mainnet. What this report adds beside it, among the systems I read, is a post-quantum output type added to an existing Bitcoin-derived chain's UTXO set and validated in consensus
 on mainnet (as BPQ did earlier on a split network, above), on a chain that kept running, with the costs, mainnet record, defects and vectors listed as contributions (1) to (4) in section 1.
 
+Two drafts for Bitcoin itself describe the same witness form for ML-DSA-65: a draft with a Bitcoin Core patch by Echelon Labs Research (April 2026) and an address-format draft by Zaenus (November 2026), both posted to Delving Bitcoin. I found them on the day version 1.0 of this report was published; they are set out in the porting note, section 6, which also says what its regtest build does and does not add beside them.
+
 ### 10.3 Wallet-side migration: the Blazecoin Quantum Bridge
 
 Every coin on a chain like this is in one of three states: exposed (the public key is already on the chain),
 hash-safe (the key is committed only by its hash and has never been revealed) or post-quantum. A wallet that
 shows an owner which coins are in which state, and moves them across, is what I call the Blazecoin Quantum
-Bridge. The name means a way across on one chain, not a bridge between chains. The move from exposed to
-hash-safe needs no consensus change on a chain whose outputs commit to keys by hash.
+Bridge. The name means a way across on one chain, not a bridge between chains. The move from exposed to hash-safe needs no consensus change on a chain whose outputs commit to keys by hash. The sorting itself, and the advice to move exposed coins first, were drafted for Bitcoin before this report, as a four-level exposure classification with a reference implementation (duncan0k, September 2026; porting note, section 8).
 
 The states are properties of keys as the chain shows them. A key revealed somewhere else (a signed message, a
 shared extended public key, another chain with the same history) is exposed although its address has never
@@ -622,6 +623,14 @@ Code
 - Open Quantum Safe. liboqs, version 0.15.0. The library the Dogecoin draft's code uses; its use there was read
   on 2026-11-11 (comparison document, section 4, point 6).
 - LLVM project. libFuzzer, as shipped with clang 17. Used for the campaign of 2026-11-13.
+- Echelon Labs Research. Post-Quantum Witness Version 3 Key-Path Spending (ML-DSA-65). BIP draft, created
+  2026-03-31. https://github.com/btcpqresearch/bip-pq-witness-v3, commit `7bbfb29` (2026-04-15); posted to Delving
+  Bitcoin 2026-04-16, https://delvingbitcoin.org/t/2422. Draft text and post read 2026-11-17; the patch not read.
+- Zaenus. Post-quantum address format draft (ML-DSA-65), version 0.2. https://github.com/Zaenus/btc-safe, commit
+  `4e09003` (2026-11-13); posted to Delving Bitcoin 2026-11-13, https://delvingbitcoin.org/t/3067. Read 2026-11-17.
+- KVANTA5. Empirical ML-DSA-87 data from a live SHA-256 PoW chain. Delving Bitcoin, 2026-07-03,
+  https://delvingbitcoin.org/t/2682; repository https://github.com/Kvanta-Organization/Kvanta5-Core (README). Read
+  2026-11-17. Described from the post and the README; the chain and the code were not examined.
 - Marscoin. https://github.com/marscoin/marscoin. Branches `feat/pq-witness-v2` (commit `8843ef7`, 2026-04-19)
   and `feature/quantum-upgrade` (at `a0fad48`, 2026-10-12). Read 2026-11-16.
 - Soqucoin. https://github.com/soqucoin/soqucoin. README, `doc/ECDSA_ELIMINATION.md` and part of

@@ -1,6 +1,6 @@
 # pq_triage: which of your coins are exposed
 
-The first job of the Blazecoin Quantum Bridge (BITCOIN-PORTING-NOTE.md, section 8) as a watch-only tool. Give it
+The first job of the Blazecoin Quantum Bridge (BITCOIN-PORTING-NOTE.md, section 8) as a watch-only tool. For Bitcoin, a more careful classification exists as a draft with its own reference implementation and test vectors: `github.com/duncan0k/pubkey-exposure-classification` (BIPs pull request 2294). It has four levels and assigns the more exposed level when the data cannot tell two apart; this script has three states and no such rule. Prefer that draft's rules where the two differ. Give it
 addresses, an extended public key or a descriptor; it tells you which coins a quantum attacker could take at any
 time, which are safe until you next spend them, and which are already post-quantum. One file, standard library
 only, no private key anywhere near it. Works on Bitcoin (any Esplora API: blockstream.info, mempool.space or your

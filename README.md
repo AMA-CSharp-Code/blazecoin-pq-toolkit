@@ -83,6 +83,23 @@ there. The benchmark, known-answer tests and fuzz targets listed below are in it
   context string bound to the chain, hash-committed key, 32-byte key hash, address prefix `BQ`, 52 characters.
   The output type is called P2PQH, pay to post-quantum key hash, in the code and the toolkit.
 
+## Changes in version 1.0.1 (17 November 2026)
+
+Version 1.0 was published earlier the same day. A search of the Delving Bitcoin forum after publication found related
+work that 1.0 did not cite. Version 1.0.1 adds it and corrects what it changes. No measurement, test vector, patch or
+defect entry is changed.
+
+- **Two drafts for Bitcoin describe almost the same witness output for ML-DSA-65** as the regtest build in this
+  repository: Echelon Labs Research (April 2026) and Zaenus (November 2026). The porting note, section 6, now credits
+  them with the design shape, says what the build here does and does not add beside them, and records the objections
+  already raised to a single-key ML-DSA output.
+- **A draft exposure classification for existing Bitcoin outputs** (duncan0k, September 2026) already covers the sorting
+  of coins and the move-exposed-first advice that this repository calls the first job of the Blazecoin Quantum Bridge.
+  The porting note (section 8), the report (section 10.3) and the triage README now say so.
+- **KVANTA5**, a new chain with ML-DSA-87 from its first block, posted mainnet figures in July 2026 (report, section 10.2).
+- **The state of Bitcoin's own discussion of output types** is described (porting note, section 6), and the date the
+  proposal that became BIP-360 was first posted is corrected to 8 June 2024.
+
 ## Contact and corrections
 
 hyperminer on bitcointalk, or admin@blazecoin.co.uk. If a number here does not match what you measure, say so.

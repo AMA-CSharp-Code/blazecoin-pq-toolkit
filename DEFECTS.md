@@ -1,6 +1,6 @@
 # Defects found after the post-quantum fork went live
 
-hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0, 17 November 2026. Companion to the field report (REPORT.md).
+hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0.1, 17 November 2026. Companion to the field report (REPORT.md).
 
 Compiled 2026-11-11; last checked against the code 2026-11-17. Sources: the bug-bounty records (2026-11-06 to
 11-10), the node repository (`blazecoin-core`) and the wallet repository. Commit hashes in this list are those of the project's development repositories. The public repositories

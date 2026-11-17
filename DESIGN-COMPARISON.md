@@ -1,6 +1,6 @@
 # Design comparison: what carries over, what does not
 
-hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0, 17 November 2026. Companion to the field report (REPORT.md).
+hyperminer (bitcointalk), admin@blazecoin.co.uk. Version 1.0.1, 17 November 2026. Companion to the field report (REPORT.md).
 
 Sources were read between 2026-11-11 and 2026-11-17; each entry gives its read date. External claims are taken from the
 primary texts in the source list at the end; those that rest on news coverage say so.
@@ -274,8 +274,11 @@ coverage says so.
 | Taproot script path, then disable the key path (Matt Corallo, bitcoin-dev, Dec 2024); security argued in Tim Ruffing, "The Post-Quantum Security of Bitcoin's Taproot as a Commitment Scheme" (IACR ePrint 2025/1307) | Two soft forks: add PQ signatures to script, later switch off Schnorr/ECDSA | Proof plus a plan | Taproot coins once the key path is disabled | Protection arrives only with the second soft fork, which disables key-path spends |
 | Commit, delay, reveal ("Fawkescoin" variant, Tadge Dryja, bitcoin-dev, May 2025; pre-emptive variant, Leo Wandersleb, June 2025; BIP-360 traces the idea to a 2018 bitcoin-dev post, "Re: Transition to post-quantum") | Soft fork | Mailing-list proposals | Only coins whose public key was never revealed | Emergency measure; front-running and delay length argued over |
 | BIP-360 (P2MR) and BIP-361 (sunset) | Soft forks | Drafts | New outputs; then old signatures retired | Not yet activated; the sunset restricts spends under the old signatures to a rescue protocol, and coins whose owners never act become unspendable |
+| Witness version 3 key-path spending, ML-DSA-65 (Echelon Labs Research; BIP draft dated 2026-03-31, `btcpqresearch/bip-pq-witness-v3` commit `7bbfb29`; Delving Bitcoin topic 2422, 2026-04-16) | Soft fork (BIP-9) | Draft with a Bitcoin Core patch and functional tests (I read the draft and the post, not the patch) | New coins sent to the new output; migration is left to other proposals | Single key only; about 5,600 WU a spend by its own figure; reference code depends on liboqs; no second implementation, by its own list of gaps |
+| Post-quantum address format, ML-DSA-65 (Zaenus, `Zaenus/btc-safe` commit `4e09003`; Delving Bitcoin topic 3067, 2026-11-13, revised to 0.2 the same day) | Soft fork | Draft with an off-chain reference implementation and test vectors | New coins sent to the new output | Single key only; 5,433 WU an input by its own table; Bitcoin Core benchmarks still to do, by its author |
 | Marscoin P2WPQH (`marscoin/marscoin`, branch `feat/pq-witness-v2`, commit `8843ef7`, April 2026; FIPS 205 and a completed signed message in October 2026, PRs 61 and 64) | Soft fork by buried height | Development branch; regtest and its "marsqnet" test network; not in a release; height 0 (off) on mainnet | Coins moved to the new witness-version-2 key-hash type, with SLH-DSA-SHA2-128s | A 7,856-byte signature; single key; test network only |
 | Wallet-side tools on Bitcoin: BitGo exposure checker (announced for institutional clients 2026-07-09, public August 2026) with a "Fix Exposed Addresses" workflow for custody clients (BitGo's own checker page for the public tool; dates and the workflow from news coverage of its 2026-07-09 announcement) | None | Public checker live (BitGo's page, read 2026-11-17); the institutional tools as reported | Exposed coins, by moving them to fresh addresses | Hygiene only (hash-safe, not post-quantum); no PQ output exists on Bitcoin yet |
+| Exposure classification for existing outputs (duncan0k; Delving Bitcoin topic 2866, 2026-09-03; `duncan0k/pubkey-exposure-classification`; BIPs pull request 2294, "BIP362", opened 2026-09-18) | None | Draft, reference implementation in Python and test vectors; pull request open on 2026-11-17 | Tells an owner which outputs are exposed at rest, exposed on spend, not exposed or undetermined, with a minimum action for each | A classification and advice, not a migration; needs a destination output type to exist |
 | Project Eleven yellowpages (2025) | None: an off-chain directory holding a proof that links a Bitcoin address to new post-quantum addresses, with no on-chain transaction | Client live; the proof-service repository is marked archived | Evidence of ownership if old keys fail | The proof is made inside a trusted execution environment (AWS Nitro Enclave) and stored in the company's database, so it rests on that enclave and that service; a proof, not a move |
 
 **How this work sits beside them.** It is not a rival design. Its subject is a post-quantum output type added to
@@ -287,8 +290,7 @@ Core) and as a witness program (Bitcoin Core, Litecoin Core); (6) a wallet-side 
 Quantum Bridge, four of whose five jobs are built and in use on this chain (porting note, section 8).
 
 **What others already have.** Other chains validate post-quantum signatures in consensus: QRL since June 2018,
-with XMSS (by the project's own account), and Soqucoin since October 2026 (by its README), both as new chains
-with no earlier outputs. An earlier chain did carry an existing UTXO set to post-quantum signatures: Bitcoin
+with XMSS (by the project's own account), Soqucoin since October 2026 (by its README) and KVANTA5 since June 2026 with ML-DSA-87 (by its post on Delving Bitcoin of 2026-07-03, which also gives mainnet stress-test figures), all as new chains with no earlier outputs. An earlier chain did carry an existing UTXO set to post-quantum signatures: Bitcoin
 Post-Quantum (BPQ) split from Bitcoin by hard fork at height 555,000 in December 2018, as a separate network
 with its own proof of work (Equihash), kept Bitcoin's outputs up to that height and added XMSS signatures to its
 script rules. That is from its site and repository, whose checkpoints run to block 600,000 and whose last commit
@@ -351,6 +353,23 @@ Related work (section 9)
 - Ruffing. The Post-Quantum Security of Bitcoin's Taproot as a Commitment Scheme. IACR ePrint 2025/1307; announcement thread https://mirror.b10c.me/lists/bitcoindev/bee6b897379b9ae0c3d48f53d40a6d70fe7915f0.camel@real-or-random.org. 2025. Re-read 2026-11-16.
 - Dryja. Post-Quantum commit / reveal Fawkescoin variant as a soft fork (bitcoin-dev). https://groups.google.com/g/bitcoindev/c/LpWOcXMcvk8. 2025-05. Re-read 2026-11-16.
 - Wandersleb. Pre-emptive variant of commit, delay, reveal (bitcoin-dev post; described, not its title). https://groups.google.com/g/bitcoindev/c/oa4nDmlLzN4. 2025-06. Re-read 2026-11-16.
+- Echelon Labs Research. Post-Quantum Witness Version 3 Key-Path Spending (ML-DSA-65). BIP draft, created
+  2026-03-31. https://github.com/btcpqresearch/bip-pq-witness-v3, commit `7bbfb29` (2026-04-15); posted to Delving
+  Bitcoin 2026-04-16, https://delvingbitcoin.org/t/2422. Draft text and post read 2026-11-17; the patch not read.
+- Zaenus. Post-quantum address format draft (ML-DSA-65), version 0.2. https://github.com/Zaenus/btc-safe, commit
+  `4e09003` (2026-11-13); posted to Delving Bitcoin 2026-11-13, https://delvingbitcoin.org/t/3067. Read 2026-11-17.
+- KVANTA5. Empirical ML-DSA-87 data from a live SHA-256 PoW chain. Delving Bitcoin, 2026-07-03,
+  https://delvingbitcoin.org/t/2682; repository https://github.com/Kvanta-Organization/Kvanta5-Core (README). Read
+  2026-11-17. Described from the post and the README; the chain and the code were not examined.
+- duncan0k. Standardizing an exposure classification for existing outputs. Delving Bitcoin, 2026-09-03,
+  https://delvingbitcoin.org/t/2866; https://github.com/duncan0k/pubkey-exposure-classification; BIPs pull request
+  2294, "BIP362: Output Public Key Exposure Classification", opened 2026-09-18. Opening post and the reply of
+  2026-09-11 read 2026-11-17; the draft text and the code not read.
+- Delving Bitcoin. "PQC output type discussion", topic 2749, opened by sipa 2026-07-27, 39 posts to 2026-10-02,
+  https://delvingbitcoin.org/t/2749; "Proposing a P2QRH BIP towards a quantum resistant soft fork", topic 956,
+  2024-06-08; reply by conduition in topic 2422, 2026-06-01; "BIP 360 (P2MR) implemented in Bitcoin Core on
+  regtest", topic 2751, 2026-07-28. Read 2026-11-17 (topic 2749 through a summary of every post with quotations;
+  the passages quoted were checked against the forum).
 - Marscoin. Marscoin Core. https://github.com/marscoin/marscoin. Branch `feat/pq-witness-v2` at commit `8843ef7` (2026-04-19, merged by PR 46) and branch `feature/quantum-upgrade` at `a0fad48` (2026-10-12): `src/script/interpreter.cpp`, `src/consensus/params.h`, `src/kernel/chainparams.cpp`, `doc/quantum-p2wpqh-sighash-v1.md`, `doc/quantum-signatures-sphincs-v1.md`, `doc/quantum-work-orders.md`. Read 2026-11-16.
 - BitGo. BTC quantum resistance score (the public checker). https://www.bitgo.com/btc-quantum-resistance-score/. Undated page. Read 2026-11-17.
 - Bitcoin Magazine. News article on BitGo's quantum risk controls (names the "Fix Exposed Addresses Workflow"; headline not recorded here). https://bitcoinmagazine.com/news/bitgo-adds-quantum-risk-controls-bitcoin. 2026-07-09. Read 2026-11-17.
